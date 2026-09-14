@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use hart::device::{self, Device, Identity};
-use transport::error::{Result, protocol_error};
+use transport::error::Result;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
 use transport::{Arrived, Transport};
 
@@ -193,12 +193,6 @@ impl Loopback for WirelessHartTransport {
     /// the slot after each request, so the write goes first and the
     /// read-back finds what it left.
     fn round(&self, payload: &[u8]) -> Result<Arrived> {
-        let far = self.far_end()?;
-        self.send_to(far.address(), payload)?;
-        let arrived = far.take_one()?;
-        if arrived.bytes != payload {
-            return Err(protocol_error("written, but what was read back differs"));
-        }
-        Ok(arrived)
+        self.round_in_order(payload)
     }
 }
