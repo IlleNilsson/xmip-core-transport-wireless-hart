@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use hart::device::{self, Device, Identity};
 use transport::error::Result;
+use transport::held::Held;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
 use transport::{Arrived, Transport};
 
@@ -156,29 +157,14 @@ impl WirelessHartTransport {
     }
 }
 
-/// The device on the air, holding what the gateway wrote until it is read
-/// back.
-struct Holding {
-    gateway: WirelessHartTransport,
-    address: String,
-}
-
-impl FarEnd for Holding {
-    fn address(&self) -> &str {
-        &self.address
-    }
-
-    fn take_one(self: Box<Self>) -> Result<Arrived> {
-        self.gateway.read_stream()
-    }
-}
-
 impl Loopback for WirelessHartTransport {
+    /// The device on the air, holding what the gateway wrote until it is read
+    /// back.
     fn far_end(&self) -> Result<Box<dyn FarEnd>> {
-        Ok(Box::new(Holding {
-            gateway: self.clone(),
-            address: self.origin(self.nickname),
-        }))
+        let gateway = self.clone();
+        Ok(Box::new(Held::new(self.origin(self.nickname), move || {
+            gateway.read_stream()
+        })))
     }
 
     fn send_to(&self, address: &str, payload: &[u8]) -> Result<()> {
