@@ -9,6 +9,7 @@
 //! at join. This crate carries the field; a loopback radio, holding no key,
 //! leaves it zero, and a keyed link fills and checks it.
 
+use codec::crc::CRC_16_KERMIT;
 use transport::error::{Result, protocol_error};
 
 /// The most a PHY packet holds.
@@ -97,7 +98,7 @@ impl Dlpdu {
         });
         out.extend_from_slice(&self.payload);
         out.extend_from_slice(&[0; 4]);
-        out.extend_from_slice(&crc16(&out).to_le_bytes());
+        out.extend_from_slice(&CRC_16_KERMIT.checksum(&out).to_le_bytes());
         out
     }
 
@@ -115,7 +116,7 @@ impl Dlpdu {
             return Err(protocol_error("a DLPDU cut off inside its headers"));
         }
         let (body, check) = bytes.split_at(bytes.len() - 2);
-        if crc16(body) != u16::from_le_bytes([check[0], check[1]]) {
+        if CRC_16_KERMIT.checksum(body) != u16::from_le_bytes([check[0], check[1]]) {
             return Err(protocol_error("a check sequence that does not check"));
         }
         if body[..2] != DATA_FRAME {
@@ -145,17 +146,12 @@ impl Dlpdu {
     }
 }
 
-/// The 802.15.4 frame check sequence, which every technology on that radio
-/// shares.
-pub use transport::crc::kermit as crc16;
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn a_data_dlpdu_reads_back_with_its_check_sequence() {
-        assert_eq!(crc16(b"123456789"), 0x2189, "CRC-16/KERMIT");
         let dlpdu = Dlpdu::new(Kind::Data, 5, 0x1234, GATEWAY, 0x0001, b"hello").expect("dlpdu");
         let bytes = dlpdu.encode();
         assert_eq!(bytes.len(), MAC_OVERHEAD + DLPDU_OVERHEAD + 5);
@@ -179,7 +175,7 @@ mod tests {
         assert!(Dlpdu::decode(&bad).is_err(), "check sequence");
         let resealed = |mut frame: Vec<u8>| {
             frame.truncate(frame.len() - 2);
-            let crc = crc16(&frame).to_le_bytes();
+            let crc = CRC_16_KERMIT.checksum(&frame).to_le_bytes();
             frame.extend_from_slice(&crc);
             frame
         };
