@@ -13,10 +13,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use hart::device::{self, Device, Identity};
+use transport::Transport;
 use transport::error::Result;
 use transport::held::Held;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
-use transport::{Arrived, Transport};
 
 use crate::dlpdu::{self, Dlpdu, Kind};
 use crate::npdu::{Command, Npdu};
@@ -171,14 +171,10 @@ impl Loopback for WirelessHartTransport {
         self.clone().send(address, payload)
     }
 
-    fn unblock(&self, _address: &str) {
-        // The air is in-process; nothing listens on a socket.
-    }
-
     /// In order on one thread: the device lives in the radio and answers in
     /// the slot after each request, so the write goes first and the
     /// read-back finds what it left.
-    fn round(&self, payload: &[u8]) -> Result<Arrived> {
-        self.round_in_order(payload)
+    fn exchanges_in_order(&self) -> bool {
+        true
     }
 }
