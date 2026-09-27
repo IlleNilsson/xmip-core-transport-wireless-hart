@@ -35,7 +35,11 @@ pub use loopback::LoopbackRadio;
 pub use npdu::{Command, Npdu};
 pub use tdma::{Direction, Superframe};
 use transport::error::{Result, TransportError, protocol_error};
-use transport::{Arrived, Directions, Transport};
+use transport::{Arrived, Configured, Directions, Transport};
+use xcore::settings::{Applies, Fixed, Presence, Read, Setting, Settings};
+
+/// How long a gateway waits for a device's answer unless told otherwise.
+pub const TIMEOUT: Duration = Duration::from_secs(1);
 
 /// What one chunk of a Stream carries: the most a command carries in one
 /// packet, less the flags byte and, on the way back, the two status bytes.
@@ -77,7 +81,7 @@ impl WirelessHartTransport {
             network,
             nickname,
             sequence: Arc::new(Mutex::new(0)),
-            timeout: Duration::from_secs(1),
+            timeout: TIMEOUT,
         }
     }
 
@@ -239,12 +243,90 @@ impl Transport for WirelessHartTransport {
     }
 }
 
+impl Configured for WirelessHartTransport {
+    /// The address names the radio. `loopback`, a device on an in-process
+    /// superframe, is the one the estate has; a gateway joins when it
+    /// exposes one.
+    const SETTINGS: &'static Settings = &Settings {
+        technology: env!("CARGO_PKG_NAME"),
+        settings: &[
+            Setting {
+                name: "network",
+                kind: xcore::settings::Kind::Integer {
+                    minimum: 0,
+                    maximum: 0xffff,
+                },
+                presence: Presence::Required,
+                meaning: "The network identifier of the mesh the device is on.",
+                applies: Applies::Both,
+            },
+            Setting {
+                name: "nickname",
+                kind: xcore::settings::Kind::Integer {
+                    minimum: 0,
+                    maximum: 0xffff,
+                },
+                presence: Presence::Required,
+                meaning: "The device's nickname: the one a Receive Location reads and a Send \
+                          Location writes unless its target names another.",
+                applies: Applies::Both,
+            },
+            Setting {
+                name: "timeout",
+                kind: xcore::settings::Kind::Duration,
+                presence: Presence::Default(Fixed::Duration(TIMEOUT)),
+                meaning: "How long a device that does not answer is waited on.",
+                applies: Applies::Both,
+            },
+        ],
+    };
+
+    fn configured(address: &str, settings: &Read) -> Result<Self> {
+        let sixteen = |name| {
+            u16::try_from(settings.integer(name))
+                .map_err(|_| protocol_error(format!("a {name} over 0xffff")))
+        };
+        let (network, nickname) = (sixteen("network")?, sixteen("nickname")?);
+        let radio = match address {
+            "loopback" => LoopbackRadio::at(nickname, network),
+            other => {
+                return Err(protocol_error(format!(
+                    "{other:?} is not a radio this estate has; `loopback` is"
+                )));
+            }
+        };
+        Ok(Self::new(radio, network, nickname).timing_out_after(settings.duration("timeout")))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use hart::device::Device;
     use transport::loopback::Loopback;
     use transport::payload::edge_payloads;
+    use xcore::settings::Given;
+
+    #[test]
+    fn wireless_hart_declares_its_settings_and_reads_through_them() {
+        assert_eq!(
+            WirelessHartTransport::SETTINGS.problems(),
+            Vec::<String>::new()
+        );
+        let given = [
+            ("network".to_string(), Given::Integer(0x1234)),
+            ("nickname".to_string(), Given::Integer(1)),
+        ];
+        let built = WirelessHartTransport::open("loopback", Applies::Send, &given).expect("built");
+        assert_eq!((built.network, built.nickname), (0x1234, 1));
+        assert_eq!(built.timeout, TIMEOUT);
+        let Err(refused) = WirelessHartTransport::open("loopback", Applies::Receive, &given[..1])
+        else {
+            panic!("the nickname is required");
+        };
+        assert!(refused.message.contains("nickname"), "{}", refused.message);
+        assert!(WirelessHartTransport::open("gateway-1", Applies::Send, &given).is_err());
+    }
 
     /// The shapes a protocol breaks on, as the Playground lists them.
     fn payloads() -> Vec<(&'static str, Vec<u8>)> {

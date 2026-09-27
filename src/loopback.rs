@@ -147,13 +147,22 @@ impl WirelessHartTransport {
     /// timeout on the gateway.
     #[must_use]
     pub fn loopback() -> Self {
+        Self::new(LoopbackRadio::at(0x0001, 0x1234), 0x1234, 0x0001)
+            .timing_out_after(LOOPBACK_TIMEOUT)
+    }
+}
+
+impl LoopbackRadio {
+    /// The loopback's device at `nickname` on network `network`, on a fresh
+    /// superframe: what a Location whose radio is `loopback` talks to.
+    #[must_use]
+    pub fn at(nickname: u16, network: u16) -> Arc<dyn Radio> {
         let device = Device::new(Identity {
             manufacturer: 0x26,
             device_type: 0xe5,
             device_id: 0x0a_1b2c,
         });
-        let radio = Arc::new(LoopbackRadio::new(device, 0x0001, 0x1234));
-        Self::new(radio, 0x1234, 0x0001).timing_out_after(LOOPBACK_TIMEOUT)
+        Arc::new(Self::new(device, nickname, network))
     }
 }
 
