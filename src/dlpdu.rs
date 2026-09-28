@@ -17,14 +17,12 @@ pub const MAX_PHY: usize = 127;
 /// The MAC header with short addresses and its check sequence.
 pub const MAC_OVERHEAD: usize = 9 + 2;
 /// The DLPDU header and its MIC.
-pub const DLPDU_OVERHEAD: usize = 9 + 4;
+const DLPDU_OVERHEAD: usize = 9 + 4;
 /// What one DLPDU carries: the network layer's whole packet.
 pub const MAX_PAYLOAD: usize = MAX_PHY - MAC_OVERHEAD - DLPDU_OVERHEAD;
 
 /// The gateway's well-known nickname.
 pub const GATEWAY: u16 = 0xf981;
-/// The network manager's well-known nickname.
-pub const NETWORK_MANAGER: u16 = 0xf980;
 
 /// Frame control: data frame, PAN identifier compression, short addresses.
 const DATA_FRAME: [u8; 2] = [0x41, 0x88];

@@ -32,6 +32,7 @@ use std::time::Duration;
 pub use dlpdu::{Dlpdu, Kind};
 use hart::device::{self, Identity};
 pub use loopback::LoopbackRadio;
+use net::Target;
 pub use npdu::{Command, Npdu};
 pub use tdma::{Direction, Superframe};
 use transport::error::{Result, TransportError, protocol_error};
@@ -232,8 +233,10 @@ impl Transport for WirelessHartTransport {
     /// `target` may name a device, `whart://radio/0001`, overriding the
     /// transport's.
     fn send(&self, target: &str, bytes: &[u8]) -> Result<()> {
-        let nickname = match transport::socket::target("whart", target) {
-            Some((_, nickname)) if !nickname.is_empty() => u16::from_str_radix(nickname, 16)
+        let nickname = match Target::under(&["whart"], target)
+            .map(|named| (named.authority(), named.path()))
+        {
+            Some((_, nickname)) if !nickname.is_empty() => codec::hex::number(nickname)
                 .map_err(|_| protocol_error(format!("{nickname:?} is not a nickname")))?,
             _ => self.nickname,
         };
