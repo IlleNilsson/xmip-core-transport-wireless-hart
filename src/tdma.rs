@@ -5,7 +5,8 @@
 //! inside it carries the slot's number.
 
 /// One slot: ten milliseconds.
-pub const SLOT: std::time::Duration = std::time::Duration::from_millis(10);
+#[cfg(test)]
+const SLOT: std::time::Duration = std::time::Duration::from_millis(10);
 
 /// Which way a slot's link goes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,7 +44,7 @@ impl Superframe {
 
     /// Which way the link in slot `asn` goes.
     #[must_use]
-    pub const fn direction_of(&self, asn: u64) -> Direction {
+    const fn direction_of(&self, asn: u64) -> Direction {
         if (asn % self.slots as u64).is_multiple_of(2) {
             Direction::Up
         } else {

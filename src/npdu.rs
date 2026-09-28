@@ -16,7 +16,7 @@ use crate::dlpdu;
 /// The network header, the security sublayer and the transport byte.
 pub const OVERHEAD: usize = 10 + 6 + 1;
 /// What one packet's commands may total: numbers, counts and data.
-pub const MAX_COMMANDS: usize = dlpdu::MAX_PAYLOAD - OVERHEAD;
+const MAX_COMMANDS: usize = dlpdu::MAX_PAYLOAD - OVERHEAD;
 /// The most data one command carries in one packet: the commands less one
 /// number and one count.
 pub const MAX_COMMAND_DATA: usize = MAX_COMMANDS - 3;
