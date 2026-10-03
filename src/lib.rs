@@ -16,6 +16,10 @@
 //! DLPDU carries. A Send Location writes a Stream to a device; a Receive
 //! Location takes what the device publishes, or reads the Stream it holds.
 //!
+//! **Acceptance is at-most-once here** ([`AT_MOST_ONCE`]): a receive takes
+//! what a device publishes, whole, and published data is answered by nobody
+//! above the link layer, whose acknowledgement the slot already carried.
+//!
 //! The radio is a trait: [`LoopbackRadio`] is a device on an in-process
 //! superframe, which every test and every box without a `WirelessHART`
 //! gateway drives, the way hart drives its loopback line. The origin URI
@@ -36,8 +40,12 @@ use net::Target;
 pub use npdu::{Command, Npdu};
 pub use tdma::{Direction, Superframe};
 use transport::error::{Result, TransportError, protocol_error};
-use transport::{Arrived, Configured, Directions, Transport};
+use transport::{Acknowledgement, Arrived, Configured, Directions, Taken, Transport};
 use xcore::settings::{Applies, Fixed, Presence, Read, Setting, Settings};
+
+/// Why a published packet cannot be acknowledged after the receive cycle.
+pub const AT_MOST_ONCE: &str = "WirelessHART published data is answered by nobody above the \
+                                link layer, whose acknowledgement the slot already carried";
 
 /// How long a gateway waits for a device's answer unless told otherwise.
 pub const TIMEOUT: Duration = Duration::from_secs(1);
@@ -165,11 +173,12 @@ impl WirelessHartTransport {
         Ok(())
     }
 
-    /// Read the Stream the device holds, a chunk per request.
+    /// Read the Stream the device holds, whole, a chunk per request. The
+    /// device keeps holding it.
     ///
     /// # Errors
     /// As [`Self::request`], or a device that never says "last".
-    pub fn read_stream(&self) -> Result<Arrived> {
+    pub fn read_stream(&self) -> Result<Taken> {
         let mut bytes = Vec::new();
         for index in 0..u32::MAX {
             let answer = self.request(device::READ_STREAM, &device::read_request(index))?;
@@ -181,14 +190,15 @@ impl WirelessHartTransport {
                     self.origin(self.nickname),
                     device::READ_STREAM
                 );
-                return Ok(Arrived::new(origin, bytes));
+                return Ok(Taken::new(origin, bytes));
             }
         }
         Err(protocol_error("a Stream that never ends"))
     }
 
-    /// The next packet on the radio as a Stream — what a device published —
-    /// or `None` when the air is quiet.
+    /// The next packet on the radio as a Stream, whole — what a device
+    /// published — or `None` when the air is quiet. Acceptance is
+    /// at-most-once ([`AT_MOST_ONCE`]).
     ///
     /// # Errors
     /// Where the radio could not be read or carried something that is not a
@@ -209,9 +219,10 @@ impl WirelessHartTransport {
             command.number,
             packet.asn
         );
-        Ok(Some(Arrived::new(
+        Ok(Some(Arrived::whole(
             origin,
             device::answered(&command.data)?.to_vec(),
+            Acknowledgement::at_most_once(AT_MOST_ONCE),
         )))
     }
 }
@@ -225,7 +236,13 @@ impl Transport for WirelessHartTransport {
         Directions::BOTH
     }
 
-    /// Nothing on the air is not an error: an empty vector.
+    fn arrivals(&self) -> transport::Arrivals {
+        transport::Arrivals::Ordered("one line or bus, answered in the order it speaks")
+    }
+
+    /// Nothing on the air is not an error: an empty vector. Acceptance is
+    /// at-most-once here: published data is answered by nobody
+    /// ([`AT_MOST_ONCE`]).
     fn receive(&self) -> Result<Vec<Arrived>> {
         Ok(self.receive_one()?.into_iter().collect())
     }
@@ -391,13 +408,13 @@ mod tests {
             "nothing is not an error"
         );
         radio.publish().expect("publish");
-        let arrived = gateway.receive().expect("published");
+        let mut arrived = gateway.receive().expect("published");
         assert_eq!(arrived.len(), 1);
-        assert_eq!(arrived[0].bytes, [6, 0x41, 0xa0, 0, 0], "20.0 psi");
-        assert_eq!(
-            arrived[0].origin_uri,
-            "whart://loopback/0001?command=1&asn=3"
-        );
+        let arrived = arrived.remove(0);
+        assert!(!arrived.defers(), "published data is at-most-once");
+        let arrived = arrived.taken().expect("taken");
+        assert_eq!(arrived.bytes, [6, 0x41, 0xa0, 0, 0], "20.0 psi");
+        assert_eq!(arrived.origin_uri, "whart://loopback/0001?command=1&asn=3");
     }
 
     #[test]
