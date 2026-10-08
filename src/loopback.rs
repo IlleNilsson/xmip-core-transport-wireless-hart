@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use hart::device::{self, Device, Identity};
+use transport::ArrivalIdentity;
 use transport::Transport;
 use transport::error::Result;
 use transport::held::Held;
@@ -167,6 +168,10 @@ impl LoopbackRadio {
 }
 
 impl Loopback for WirelessHartTransport {
+    fn arrival_identity(&self) -> ArrivalIdentity {
+        ArrivalIdentity::Named(&[context::property::WIRELESS_HART_NICKNAME])
+    }
+
     /// The device on the air, holding what the gateway wrote until it is read
     /// back.
     fn far_end(&self) -> Result<Box<dyn FarEnd>> {

@@ -33,6 +33,7 @@ pub mod tdma;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use context::property::WIRELESS_HART_NICKNAME;
 pub use dlpdu::{Dlpdu, Kind};
 use hart::device::{self, Identity};
 pub use loopback::LoopbackRadio;
@@ -190,7 +191,8 @@ impl WirelessHartTransport {
                     self.origin(self.nickname),
                     device::READ_STREAM
                 );
-                return Ok(Taken::new(origin, bytes));
+                let nickname = format!("{:04x}", self.nickname);
+                return Ok(Taken::new(origin, bytes).observing(WIRELESS_HART_NICKNAME, nickname));
             }
         }
         Err(protocol_error("a Stream that never ends"))
@@ -219,11 +221,14 @@ impl WirelessHartTransport {
             command.number,
             packet.asn
         );
-        Ok(Some(Arrived::whole(
-            origin,
-            device::answered(&command.data)?.to_vec(),
-            Acknowledgement::at_most_once(AT_MOST_ONCE),
-        )))
+        Ok(Some(
+            Arrived::whole(
+                origin,
+                device::answered(&command.data)?.to_vec(),
+                Acknowledgement::at_most_once(AT_MOST_ONCE),
+            )
+            .observing(WIRELESS_HART_NICKNAME, format!("{:04x}", dlpdu.source)),
+        ))
     }
 }
 
