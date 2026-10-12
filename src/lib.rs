@@ -245,6 +245,10 @@ impl Transport for WirelessHartTransport {
         transport::Arrivals::Ordered("one line or bus, answered in the order it speaks")
     }
 
+    fn waiting(&self) -> transport::Waiting {
+        transport::Waiting::Polled("a read of the loopback radio returns at once")
+    }
+
     /// Nothing on the air is not an error: an empty vector. Acceptance is
     /// at-most-once here: published data is answered by nobody
     /// ([`AT_MOST_ONCE`]).
