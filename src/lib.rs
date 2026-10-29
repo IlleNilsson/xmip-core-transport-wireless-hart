@@ -264,7 +264,7 @@ impl Transport for WirelessHartTransport {
     /// transport's.
     fn send_from(&self, target: &str, outgoing: transport::Outgoing<'_>) -> Result<()> {
         let bytes: &[u8] = &outgoing.gather()?;
-        let nickname = match Target::under(&["whart"], target)
+        let nickname = match Target::under(Self::SCHEMES, target)
             .map(|named| (named.authority(), named.path()))
         {
             Some((_, nickname)) if !nickname.is_empty() => codec::hex::number(nickname)
@@ -314,6 +314,9 @@ impl Configured for WirelessHartTransport {
             },
         ],
     };
+
+    /// The schemes a Location's address is entered with to choose this technology.
+    const SCHEMES: &'static [&'static str] = &["whart"];
 
     fn configured(address: &str, settings: &Read) -> Result<Self> {
         let sixteen = |name| {
