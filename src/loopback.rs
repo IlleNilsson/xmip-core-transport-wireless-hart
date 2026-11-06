@@ -9,8 +9,9 @@
 //! time. One air, one thread: the round goes in order, as hart's does.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use xcore::lock::Locked;
 
 use hart::device::{self, Device, Identity};
 use transport::ArrivalIdentity;
@@ -57,17 +58,11 @@ impl LoopbackRadio {
     /// The absolute slot number the network's clock is at.
     #[must_use]
     pub fn asn(&self) -> u64 {
-        self.superframe
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .asn()
+        self.superframe.locked().asn()
     }
 
     fn slot(&self, direction: Direction) -> u64 {
-        self.superframe
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .next_slot(direction)
+        self.superframe.locked().next_slot(direction)
     }
 
     fn queue(&self, packet: &Npdu, sequence: u8) -> Result<()> {
@@ -83,10 +78,7 @@ impl LoopbackRadio {
             self.nickname,
             &packet.encode(),
         )?;
-        self.to_gateway
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push_back(dlpdu.encode());
+        self.to_gateway.locked().push_back(dlpdu.encode());
         Ok(())
     }
 
@@ -134,11 +126,7 @@ impl Radio for LoopbackRadio {
     }
 
     fn receive(&self, _timeout: Duration) -> Result<Option<Vec<u8>>> {
-        Ok(self
-            .to_gateway
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .pop_front())
+        Ok(self.to_gateway.locked().pop_front())
     }
 }
 

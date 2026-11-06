@@ -30,8 +30,9 @@ pub mod loopback;
 pub mod npdu;
 pub mod tdma;
 
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use xcore::lock::Locked;
 
 use context::property::WIRELESS_HART_NICKNAME;
 pub use dlpdu::{Dlpdu, Kind};
@@ -109,7 +110,7 @@ impl WirelessHartTransport {
     }
 
     fn next_sequence(&self) -> u8 {
-        let mut sequence = self.sequence.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut sequence = self.sequence.locked();
         let next = *sequence;
         *sequence = sequence.wrapping_add(1);
         next
