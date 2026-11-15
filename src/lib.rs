@@ -43,7 +43,7 @@ pub use npdu::{Command, Npdu};
 pub use tdma::{Direction, Superframe};
 use transport::error::{Result, TransportError, protocol_error};
 use transport::{Acknowledgement, Arrived, Configured, Directions, Taken, Transport};
-use xcore::settings::{Applies, Fixed, Presence, Read, Setting, Settings};
+use xcore::settings::{Applies, Presence, Read, Setting, Settings};
 
 /// Why a published packet cannot be acknowledged after the receive cycle.
 pub const AT_MOST_ONCE: &str = "WirelessHART published data is answered by nobody above the \
@@ -94,13 +94,6 @@ impl WirelessHartTransport {
             sequence: Arc::new(Mutex::new(0)),
             timeout: TIMEOUT,
         }
-    }
-
-    /// Give up on a device that does not answer within `timeout`.
-    #[must_use]
-    pub const fn timing_out_after(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
-        self
     }
 
     /// `whart://<radio>/<nickname>`.
@@ -306,18 +299,20 @@ impl Configured for WirelessHartTransport {
                           Location writes unless its target names another.",
                 applies: Applies::Both,
             },
-            Setting {
-                name: "timeout",
-                kind: xcore::settings::Kind::Duration,
-                presence: Presence::Default(Fixed::Duration(TIMEOUT)),
-                meaning: "How long a device that does not answer is waited on.",
-                applies: Applies::Both,
-            },
+            transport::configured::timeout(
+                Applies::Both,
+                Some(TIMEOUT),
+                "How long a device that does not answer is waited on.",
+            ),
         ],
     };
 
     /// The schemes a Location's address is entered with to choose this technology.
     const SCHEMES: &'static [&'static str] = &["whart"];
+
+    fn timeout_kept(&mut self) -> Option<&mut dyn transport::configured::TimeoutKept> {
+        Some(&mut self.timeout)
+    }
 
     fn configured(address: &str, settings: &Read) -> Result<Self> {
         let sixteen = |name| {
@@ -333,7 +328,7 @@ impl Configured for WirelessHartTransport {
                 )));
             }
         };
-        Ok(Self::new(radio, network, nickname).timing_out_after(settings.duration("timeout")))
+        Ok(Self::new(radio, network, nickname))
     }
 }
 

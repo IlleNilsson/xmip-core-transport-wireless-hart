@@ -15,6 +15,7 @@ use xcore::lock::Locked;
 
 use hart::device::{self, Device, Identity};
 use transport::ArrivalIdentity;
+use transport::Configured;
 use transport::Transport;
 use transport::error::Result;
 use transport::held::Held;
