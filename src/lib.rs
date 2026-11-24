@@ -361,7 +361,7 @@ mod tests {
         assert!(WirelessHartTransport::open("gateway-1", Applies::Send, &given).is_err());
     }
 
-    /// The shapes a protocol breaks on, as the Essentials lists them.
+    /// The shapes a protocol breaks on, as the System Tests list them.
     fn payloads() -> Vec<(&'static str, Vec<u8>)> {
         let mut payloads = edge_payloads();
         payloads.extend([(
