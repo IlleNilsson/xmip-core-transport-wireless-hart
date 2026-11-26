@@ -24,39 +24,65 @@
 //! superframe, which every test and every box without a `WirelessHART`
 //! gateway drives, the way hart drives its loopback line. The origin URI
 //! names the radio and the device: `whart://loopback/0001?command=131`.
+//!
+//! **Built with its `declaration` feature alone** the crate is
+//! [`declaration`], what a Location of it is configured with, and none of
+//! the code above, which is behind the default feature: what the surfaces'
+//! library carries (ADR-0064, amendment 2026-11-26).
 
+#[cfg(feature = "declaration")]
+pub mod declaration;
+#[cfg(feature = "default")]
 pub mod dlpdu;
+#[cfg(feature = "default")]
 pub mod loopback;
+#[cfg(feature = "default")]
 pub mod npdu;
+#[cfg(feature = "default")]
 pub mod tdma;
 
+#[cfg(feature = "default")]
 use std::sync::{Arc, Mutex};
+#[cfg(feature = "default")]
 use std::time::Duration;
+#[cfg(feature = "default")]
 use xcore::lock::Locked;
 
+#[cfg(feature = "default")]
 use context::property::WIRELESS_HART_NICKNAME;
+#[cfg(feature = "declaration")]
+pub use declaration::TIMEOUT;
+#[cfg(feature = "default")]
 pub use dlpdu::{Dlpdu, Kind};
+#[cfg(feature = "default")]
 use hart::device::{self, Identity};
+#[cfg(feature = "default")]
 pub use loopback::LoopbackRadio;
+#[cfg(feature = "default")]
 use net::Target;
+#[cfg(feature = "default")]
 pub use npdu::{Command, Npdu};
+#[cfg(feature = "default")]
 pub use tdma::{Direction, Superframe};
+#[cfg(feature = "default")]
 use transport::error::{Result, TransportError, protocol_error};
+#[cfg(feature = "default")]
 use transport::{Acknowledgement, Arrived, Configured, Directions, Taken, Transport};
-use xcore::settings::{Applies, Presence, Read, Setting, Settings};
+#[cfg(feature = "default")]
+use xcore::settings::{Read, Settings};
 
 /// Why a published packet cannot be acknowledged after the receive cycle.
+#[cfg(feature = "default")]
 pub const AT_MOST_ONCE: &str = "WirelessHART published data is answered by nobody above the \
                                 link layer, whose acknowledgement the slot already carried";
 
-/// How long a gateway waits for a device's answer unless told otherwise.
-pub const TIMEOUT: Duration = Duration::from_secs(1);
-
 /// What one chunk of a Stream carries: the most a command carries in one
 /// packet, less the flags byte and, on the way back, the two status bytes.
+#[cfg(feature = "default")]
 pub const MAX_CHUNK: usize = npdu::MAX_COMMAND_DATA - 3;
 
 /// Where DLPDUs go and come from: the air, as the gateway hears it.
+#[cfg(feature = "default")]
 pub trait Radio: Send + Sync {
     /// The radio's name, for the origin URI.
     fn name(&self) -> &str;
@@ -73,6 +99,7 @@ pub trait Radio: Send + Sync {
 }
 
 /// The gateway's side of a radio, talking to one device.
+#[cfg(feature = "default")]
 #[derive(Clone)]
 pub struct WirelessHartTransport {
     radio: Arc<dyn Radio>,
@@ -82,6 +109,7 @@ pub struct WirelessHartTransport {
     timeout: Duration,
 }
 
+#[cfg(feature = "default")]
 impl WirelessHartTransport {
     /// A gateway on `radio`, talking to the device at `nickname` on network
     /// `network`.
@@ -226,6 +254,7 @@ impl WirelessHartTransport {
     }
 }
 
+#[cfg(feature = "default")]
 impl Transport for WirelessHartTransport {
     fn name(&self) -> &'static str {
         "wireless-hart"
@@ -271,44 +300,10 @@ impl Transport for WirelessHartTransport {
     }
 }
 
+#[cfg(feature = "default")]
 impl Configured for WirelessHartTransport {
-    /// The address names the radio. `loopback`, a device on an in-process
-    /// superframe, is the one the estate has; a gateway joins when it
-    /// exposes one.
-    const SETTINGS: &'static Settings = &Settings {
-        technology: env!("CARGO_PKG_NAME"),
-        settings: &[
-            Setting {
-                name: "network",
-                kind: xcore::settings::Kind::Integer {
-                    minimum: 0,
-                    maximum: 0xffff,
-                },
-                presence: Presence::Required,
-                meaning: "The network identifier of the mesh the device is on.",
-                applies: Applies::Both,
-            },
-            Setting {
-                name: "nickname",
-                kind: xcore::settings::Kind::Integer {
-                    minimum: 0,
-                    maximum: 0xffff,
-                },
-                presence: Presence::Required,
-                meaning: "The device's nickname: the one a Receive Location reads and a Send \
-                          Location writes unless its target names another.",
-                applies: Applies::Both,
-            },
-            transport::configured::timeout(
-                Applies::Both,
-                Some(TIMEOUT),
-                "How long a device that does not answer is waited on.",
-            ),
-        ],
-    };
-
-    /// The schemes a Location's address is entered with to choose this technology.
-    const SCHEMES: &'static [&'static str] = &["whart"];
+    const SETTINGS: &'static Settings = declaration::SETTINGS;
+    const SCHEMES: &'static [&'static str] = declaration::SCHEMES;
 
     fn timeout_kept(&mut self) -> Option<&mut dyn transport::configured::TimeoutKept> {
         Some(&mut self.timeout)
@@ -338,7 +333,7 @@ mod tests {
     use hart::device::Device;
     use transport::loopback::Loopback;
     use transport::payload::edge_payloads;
-    use xcore::settings::Given;
+    use xcore::settings::{Applies, Given};
 
     #[test]
     fn wireless_hart_declares_its_settings_and_reads_through_them() {
