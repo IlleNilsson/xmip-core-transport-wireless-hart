@@ -10,9 +10,9 @@ use xcore::settings::{Applies, Kind, Presence, Setting, Settings};
 /// How long a gateway waits for a device's answer unless told otherwise.
 pub const TIMEOUT: Duration = Duration::from_secs(1);
 
-/// Every setting a Location takes beyond its address, the radio:
-/// `loopback`, a device on an in-process superframe, is the one the estate
-/// has; a gateway joins when it exposes one.
+/// Every setting a Location takes beyond its address, the radio: an
+/// 802.15.4 interface of Linux's kernel, `wpan0`, the gateway at its own
+/// short address, or `loopback`, a device on an in-process superframe.
 pub const SETTINGS: &Settings = &Settings {
     technology: env!("CARGO_PKG_NAME"),
     settings: &[
@@ -23,7 +23,8 @@ pub const SETTINGS: &Settings = &Settings {
                 maximum: 0xffff,
             },
             presence: Presence::Required,
-            meaning: "The network identifier of the mesh the device is on.",
+            meaning: "The network identifier of the mesh the device is on: on an \
+                      interface, the interface's PAN.",
             applies: Applies::Both,
         },
         Setting {

@@ -9,7 +9,7 @@
 //! a time-slotted, channel-hopping mesh, a gateway at its edge, and the
 //! HART command set unchanged above it. What is here is the DLPDU with its
 //! TDMA slot, the network and transport layers that carry aggregated
-//! commands, and the loopback radio whose slots a gateway and a device
+//! commands, and the device on the air, whose slots a gateway and a device
 //! share. The device, its identity, commands 0 and 1, and the device-
 //! specific commands that write and read a Stream in chunks are hart's
 //! ([`hart::device`]); this crate takes them as they are, chunked to what a
@@ -20,10 +20,16 @@
 //! what a device publishes, whole, and published data is answered by nobody
 //! above the link layer, whose acknowledgement the slot already carried.
 //!
-//! The radio is a trait: [`LoopbackRadio`] is a device on an in-process
-//! superframe, which every test and every box without a `WirelessHART`
-//! gateway drives, the way hart drives its loopback line. The origin URI
-//! names the radio and the device: `whart://loopback/0001?command=131`.
+//! The radio is the capability's `ieee802154::Radio`, and the DLPDU's
+//! header is the frame's MAC header, the network the PAN and the nicknames
+//! short addresses: a Location's address names an interface of Linux's
+//! kernel, `whart://wpan0`, its `network` the interface's PAN and the
+//! gateway the interface's own short address; or `loopback`, a device on an
+//! in-process superframe ([`LoopbackRadio`]), which every test and every box
+//! without a `WirelessHART` gateway drives, the way hart drives its loopback
+//! line. The kernel's MAC sends when the air is clear, not in a slot: the
+//! slots are the device's own count (open problem 233). The origin URI names
+//! the radio and the device: `whart://loopback/0001?command=131`.
 //!
 //! **Built with its `declaration` feature alone** the crate is
 //! [`declaration`].
@@ -55,7 +61,7 @@ pub use dlpdu::{Dlpdu, Kind};
 #[cfg(feature = "default")]
 use hart::device::{self, Identity};
 #[cfg(feature = "default")]
-pub use loopback::LoopbackRadio;
+pub use loopback::{LoopbackRadio, OnTheAir};
 #[cfg(feature = "default")]
 use net::Target;
 #[cfg(feature = "default")]
@@ -65,7 +71,9 @@ pub use tdma::{Direction, Superframe};
 #[cfg(feature = "default")]
 use transport::error::{Result, TransportError, protocol_error};
 #[cfg(feature = "default")]
-use transport::{Acknowledgement, Arrived, Configured, Directions, Taken, Transport};
+use transport::ieee802154::{self, Radio};
+#[cfg(feature = "default")]
+use transport::{Acknowledgement, Arrived, Configured, Directions, Taken, Transport, Waiting};
 #[cfg(feature = "default")]
 use xcore::settings::{Read, Settings};
 
@@ -79,29 +87,14 @@ pub const AT_MOST_ONCE: &str = "WirelessHART published data is answered by nobod
 #[cfg(feature = "default")]
 pub const MAX_CHUNK: usize = npdu::MAX_COMMAND_DATA - 3;
 
-/// Where DLPDUs go and come from: the air, as the gateway hears it.
-#[cfg(feature = "default")]
-pub trait Radio: Send + Sync {
-    /// The radio's name, for the origin URI.
-    fn name(&self) -> &str;
-    /// Put a DLPDU in the next slot linked `direction`; the slot it went in.
-    ///
-    /// # Errors
-    /// Where the radio refused it.
-    fn transmit(&self, direction: Direction, dlpdu: &[u8]) -> Result<u64>;
-    /// The next DLPDU, or `None` when nothing arrived within `timeout`.
-    ///
-    /// # Errors
-    /// Where the radio could not be read.
-    fn receive(&self, timeout: Duration) -> Result<Option<Vec<u8>>>;
-}
-
 /// The gateway's side of a radio, talking to one device.
 #[cfg(feature = "default")]
 #[derive(Clone)]
 pub struct WirelessHartTransport {
     radio: Arc<dyn Radio>,
-    network: u16,
+    /// The gateway's own nickname: [`dlpdu::GATEWAY`], or its interface's
+    /// short address.
+    own: u16,
     nickname: u16,
     sequence: Arc<Mutex<u8>>,
     timeout: Duration,
@@ -109,17 +102,24 @@ pub struct WirelessHartTransport {
 
 #[cfg(feature = "default")]
 impl WirelessHartTransport {
-    /// A gateway on `radio`, talking to the device at `nickname` on network
-    /// `network`.
+    /// A gateway on `radio` at the well-known [`dlpdu::GATEWAY`], talking to
+    /// the device at `nickname` on the radio's network.
     #[must_use]
-    pub fn new(radio: Arc<dyn Radio>, network: u16, nickname: u16) -> Self {
+    pub fn new(radio: Arc<dyn Radio>, nickname: u16) -> Self {
         Self {
             radio,
-            network,
+            own: dlpdu::GATEWAY,
             nickname,
             sequence: Arc::new(Mutex::new(0)),
             timeout: TIMEOUT,
         }
+    }
+
+    /// The gateway at `own` on the air: an interface's own short address.
+    #[must_use]
+    pub const fn at(mut self, own: u16) -> Self {
+        self.own = own;
+        self
     }
 
     /// `whart://<radio>/<nickname>`.
@@ -147,22 +147,15 @@ impl WirelessHartTransport {
             number: command,
             data: data.to_vec(),
         };
-        let packet = Npdu::new(self.nickname, dlpdu::GATEWAY, vec![asked])?.in_slot(0, sequence);
-        let dlpdu = Dlpdu::new(
-            Kind::Data,
-            sequence,
-            self.network,
-            self.nickname,
-            dlpdu::GATEWAY,
-            &packet.encode(),
-        )?;
-        self.radio.transmit(Direction::Up, &dlpdu.encode())?;
+        let packet = Npdu::new(self.nickname, self.own, vec![asked])?.in_slot(0, sequence);
+        let dlpdu = Dlpdu::new(Kind::Data, &packet.encode())?;
+        self.radio.transmit(self.nickname, &dlpdu.encode())?;
         loop {
-            let bytes = self
+            let heard = self
                 .radio
                 .receive(self.timeout)?
                 .ok_or_else(|| TransportError::retryable("the device did not answer"))?;
-            let answer = Npdu::decode(&Dlpdu::decode(&bytes)?.payload)?;
+            let answer = Npdu::decode(&Dlpdu::decode(&heard.payload)?.payload)?;
             if !answer.response || answer.sequence != packet.sequence {
                 continue;
             }
@@ -226,18 +219,17 @@ impl WirelessHartTransport {
     /// Where the radio could not be read or carried something that is not a
     /// packet.
     pub fn receive_one(&self) -> Result<Option<Arrived>> {
-        let Some(bytes) = self.radio.receive(self.timeout)? else {
+        let Some(heard) = self.radio.receive(self.timeout)? else {
             return Ok(None);
         };
-        let dlpdu = Dlpdu::decode(&bytes)?;
-        let packet = Npdu::decode(&dlpdu.payload)?;
+        let packet = Npdu::decode(&Dlpdu::decode(&heard.payload)?.payload)?;
         let command = packet
             .commands
             .first()
             .ok_or_else(|| protocol_error("a packet with no command"))?;
         let origin = format!(
             "{}?command={}&asn={}",
-            self.origin(dlpdu.source),
+            self.origin(heard.source),
             command.number,
             packet.asn
         );
@@ -247,7 +239,7 @@ impl WirelessHartTransport {
                 device::answered(&command.data)?.to_vec(),
                 Acknowledgement::at_most_once(AT_MOST_ONCE),
             )
-            .observing(WIRELESS_HART_NICKNAME, format!("{:04x}", dlpdu.source)),
+            .observing(WIRELESS_HART_NICKNAME, format!("{:04x}", heard.source)),
         ))
     }
 }
@@ -266,8 +258,8 @@ impl Transport for WirelessHartTransport {
         transport::Arrivals::Ordered("one line or bus, answered in the order it speaks")
     }
 
-    fn waiting(&self) -> transport::Waiting {
-        transport::Waiting::Polled("a read of the loopback radio returns at once")
+    fn waiting(&self) -> Waiting {
+        self.radio.waiting()
     }
 
     /// Nothing on the air is not an error: an empty vector. Acceptance is
@@ -292,12 +284,15 @@ impl Transport for WirelessHartTransport {
                 .map_err(|_| protocol_error(format!("{nickname:?} is not a nickname")))?,
             _ => self.nickname,
         };
-        Self::new(Arc::clone(&self.radio), self.network, nickname)
+        Self::new(Arc::clone(&self.radio), nickname)
+            .at(self.own)
             .timing_out_after(self.timeout)
             .write_stream(bytes)
     }
 }
 
+/// The address is the radio: an interface, whose PAN the Location's
+/// `network` must be, or `loopback`.
 #[cfg(feature = "default")]
 impl Configured for WirelessHartTransport {
     const SETTINGS: &'static Settings = declaration::SETTINGS;
@@ -313,15 +308,12 @@ impl Configured for WirelessHartTransport {
                 .map_err(|_| protocol_error(format!("a {name} over 0xffff")))
         };
         let (network, nickname) = (sixteen("network")?, sixteen("nickname")?);
-        let radio = match address {
-            "loopback" => LoopbackRadio::at(nickname, network),
-            other => {
-                return Err(protocol_error(format!(
-                    "{other:?} is not a radio this estate has; `loopback` is"
-                )));
-            }
-        };
-        Ok(Self::new(radio, network, nickname))
+        if address == "loopback" {
+            return Ok(Self::new(LoopbackRadio::at(nickname), nickname));
+        }
+        let (radio, at) = ieee802154::interface(address)?;
+        ieee802154::agreeing(address, "network", network, at.pan)?;
+        Ok(Self::new(radio, nickname).at(at.short))
     }
 }
 
@@ -344,8 +336,12 @@ mod tests {
             ("nickname".to_string(), Given::Integer(1)),
         ];
         let built = WirelessHartTransport::open("loopback", Applies::Send, &given).expect("built");
-        assert_eq!((built.network, built.nickname), (0x1234, 1));
+        assert_eq!((built.own, built.nickname), (dlpdu::GATEWAY, 1));
         assert_eq!(built.timeout, TIMEOUT);
+        assert!(
+            built.waiting().polled(),
+            "the loopback radio returns at once"
+        );
         let Err(refused) = WirelessHartTransport::open("loopback", Applies::Receive, &given[..1])
         else {
             panic!("the nickname is required");
@@ -366,14 +362,13 @@ mod tests {
         payloads
     }
 
-    fn radio(loopback: &WirelessHartTransport) -> Arc<LoopbackRadio> {
+    fn radio() -> Arc<LoopbackRadio> {
         let device = Device::new(Identity {
             manufacturer: 1,
             device_type: 2,
             device_id: 3,
         });
-        let _ = loopback;
-        Arc::new(LoopbackRadio::new(device, 0x0001, 0x1234))
+        Arc::new(LoopbackRadio::new(device, 0x0001))
     }
 
     #[test]
@@ -404,8 +399,8 @@ mod tests {
 
     #[test]
     fn the_device_identifies_itself_and_publishes_in_its_slot() {
-        let radio = radio(&WirelessHartTransport::loopback());
-        let gateway = WirelessHartTransport::new(Arc::clone(&radio) as Arc<dyn Radio>, 0x1234, 1);
+        let radio = radio();
+        let gateway = WirelessHartTransport::new(Arc::clone(&radio) as Arc<dyn Radio>, 1);
         let identity = gateway.identify().expect("identify");
         assert_eq!(identity, *radio.device().identity());
         assert_eq!(radio.asn(), 2, "one slot up, one down");
@@ -425,8 +420,8 @@ mod tests {
 
     #[test]
     fn a_device_that_is_not_addressed_does_not_answer() {
-        let radio = radio(&WirelessHartTransport::loopback());
-        let gateway = WirelessHartTransport::new(Arc::clone(&radio) as Arc<dyn Radio>, 0x1234, 1)
+        let radio = radio();
+        let gateway = WirelessHartTransport::new(Arc::clone(&radio) as Arc<dyn Radio>, 1)
             .timing_out_after(Duration::from_millis(10));
         let error = gateway
             .send("whart://loopback/0002", b"x")
@@ -436,7 +431,43 @@ mod tests {
             gateway.send("whart://loopback/zz", b"x").is_err(),
             "not a nickname"
         );
-        let elsewhere = WirelessHartTransport::new(radio, 0x9999, 1);
-        assert!(elsewhere.identify().is_err(), "another network");
+        assert_eq!(radio.asn(), 1, "the up slot passed unanswered");
+    }
+
+    /// The device on the air answers what a gateway sends it, and only
+    /// that: what a far end on an interface does with each frame it hears.
+    #[test]
+    fn a_device_on_the_air_answers_a_request_sent_to_it() {
+        let air = OnTheAir::new(
+            Device::new(Identity {
+                manufacturer: 1,
+                device_type: 2,
+                device_id: 3,
+            }),
+            0x0002,
+        );
+        let asked = Npdu::new(
+            2,
+            1,
+            vec![Command {
+                number: device::IDENTIFY,
+                data: Vec::new(),
+            }],
+        )
+        .expect("packet");
+        let bytes = Dlpdu::new(Kind::Data, &asked.encode())
+            .expect("dlpdu")
+            .encode();
+        assert_eq!(
+            air.answer(3, &bytes).expect("heard"),
+            None,
+            "another nickname"
+        );
+        let answer = air.answer(2, &bytes).expect("heard").expect("answered");
+        let answer = Npdu::decode(&Dlpdu::decode(&answer).expect("dlpdu").payload).expect("npdu");
+        assert!(answer.response);
+        assert_eq!((answer.destination, answer.source), (1, 2));
+        let ack = Dlpdu::new(Kind::Ack, &[]).expect("ack").encode();
+        assert_eq!(air.answer(2, &ack).expect("heard"), None, "no data");
     }
 }
